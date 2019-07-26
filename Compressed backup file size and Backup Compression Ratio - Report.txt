@@ -1,0 +1,50 @@
+T-SQL Script to Check the Native Compressed backup file size and Backup Compression Ratio
+ 
+ 
+ --http://sqldbpool.com/2014/09/03/t-sql-script-to-check-the-native-compressed-backup-file-size-and-backup-compression-ratio/
+
+First of all make sure backup compression is enabled on the SQL Server. You can execute below query to check the backup compression.
+
+select name,[description],value_in_use from sys.configurations where name like '%backup%'
+
+Execute below script to check the compressed backup file size and backup compression ratio.
+
+
+
+Declare @FromDate as datetime
+-- Specify the from date value
+set @FromDate = GETDATE() -1
+
+SELECT  
+   CONVERT(CHAR(100), SERVERPROPERTY('Servername')) AS SQLServerName, 
+   msdb.dbo.backupset.database_name,  
+   CASE msdb..backupset.type  
+       WHEN 'D' THEN 'Database'  
+       WHEN 'L' THEN 'Log'  
+       WHEN 'I' THEN 'Differential'  
+   END AS backup_type,  
+   msdb.dbo.backupset.backup_start_date,  
+   msdb.dbo.backupset.backup_finish_date, 
+   msdb.dbo.backupset.expiration_date, 
+   DATEDIFF (SECOND, msdb.dbo.backupset.backup_start_date, msdb.dbo.backupset.backup_finish_date) 'Backup Elapsed Time (sec)',
+   msdb.dbo.backupset.compressed_backup_size AS 'Compressed Backup Size in KB',
+  (msdb.dbo.backupset.compressed_backup_size/1024/1024) AS 'Compress Backup Size in MB',
+   CONVERT (NUMERIC (20,3), (CONVERT (FLOAT, msdb.dbo.backupset.backup_size) /CONVERT (FLOAT, msdb.dbo.backupset.compressed_backup_size))) 'Compression Ratio',
+   CASE msdb..backupset.type  
+       WHEN 'D' THEN 'Database'  
+       WHEN 'L' THEN 'Log'  
+   END AS backup_type,  
+   msdb.dbo.backupset.backup_size,  
+   msdb.dbo.backupmediafamily.logical_device_name,  
+   msdb.dbo.backupmediafamily.physical_device_name,   
+   msdb.dbo.backupset.name AS backupset_name, 
+   msdb.dbo.backupset.description 
+FROM   msdb.dbo.backupmediafamily  
+   INNER JOIN msdb.dbo.backupset ON msdb.dbo.backupmediafamily.media_set_id = msdb.dbo.backupset.media_set_id 
+WHERE 
+CONVERT(datetime, msdb.dbo.backupset.backup_start_date, 102) >= @FromDate
+AND msdb.dbo.backupset.backup_size > 0 
+ORDER BY  
+   msdb.dbo.backupset.database_name, 
+   msdb.dbo.backupset.backup_finish_date
+

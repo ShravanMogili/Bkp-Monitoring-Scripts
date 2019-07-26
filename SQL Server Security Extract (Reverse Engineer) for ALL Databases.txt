@@ -1,0 +1,168 @@
+SQL Server Security Extract (Reverse Engineer) for ALL Databases
+
+http://www.sqlservercentral.com/scripts/75191/
+
+These scripts will extract security for Windows Logins, Database Users, Roles, Objects and SQL Logins.
+
+The only caveat is that the sql logins do not script it's database user or roles tied to it.This was taken from several sources online and changed to fit what I needed. You can run this as results to text and save, or results to file. I used this as backup scripts before making security changes.
+
+-- Create SQL Logins
+SET NOCOUNT ON 
+SELECT 'EXEC sp_addlogin @loginame = ''' + name + '''' 
+,', @defdb = ''' + default_database_name + '''' 
+,', @deflanguage = ''' + default_language_name + '''' 
+,', @encryptopt = ''skip_encryption''' 
+,', @passwd =' 
+, cast(password_hash AS varbinary(256)) 
+,', @sid =' 
+, sid 
+FROM sys.sql_logins 
+WHERE name NOT IN ('sa') 
+ORDER BY name
+
+-- Create Windows Logins
+EXEC sp_MSforeachdb 'Print''-- Users for [?]''
+Use [?];
+Print''Use [?];''
+select ''CREATE LOGIN ['' + server_login_name + ''] FROM WINDOWS WITH DEFAULT_DATABASE=[TEMPDB], DEFAULT_LANGUAGE=[us_english]'' 
+from (
+select dp.name as database_principal_name, sl.name server_login_name
+from sys.database_principals dp 
+left outer join sys.server_principals sl on dp.sid = sl.sid 
+where dp.type =''U''and dp.name not in (''dbo'', ''guest'', ''INFORMATION_SCHEMA'', ''sys'')
+and sl.name <> ''''
+) ss'
+
+-- Create Database Users
+EXEC sp_MSforeachdb 'Print''-- Users for [?]''
+Use [?];
+Print''Use [?];''
+select ''CREATE USER ['' + database_principal_name + ''] FOR LOGIN ['' + server_login_name + ''] WITH DEFAULT_SCHEMA=[dbo]'' 
+from (
+select dp.name as database_principal_name, sl.name server_login_name
+from sys.database_principals dp 
+left outer join sys.server_principals sl on dp.sid = sl.sid 
+where dp.type NOT IN (''R'', ''G'', ''C'')and dp.name not in (''dbo'', ''guest'', ''INFORMATION_SCHEMA'', ''sys'')
+and sl.name <> ''''
+) ss'
+-- ADD ROLE MEMBERS
+EXEC sp_MSforeachdb 'Print''-- Role Members for [?]''
+Print''Use [?];''
+Use [?];SELECT ''EXEC sp_addrolemember '''''' + rp.name + '''''', '''''' + mp.name + '''''''' AS [-- CreateRoleSQL]
+FROM sys.database_role_members a
+INNER JOIN sys.database_principals rp ON rp.principal_id = a.role_principal_id
+INNER JOIN sys.database_principals AS mp ON mp.principal_id = a.member_principal_id
+'
+
+-- Remove ROLE MEMBERS
+EXEC sp_MSforeachdb 'Print''-- Role Members for [?]''
+Print''Use [?];''
+Use [?];SELECT 
+''EXEC sp_droprolemember '''''' + rp.name + '''''', '''''' + mp.name + '''''''' AS [-- RemoveRoleSQL]
+FROM sys.database_role_members a
+INNER JOIN sys.database_principals rp ON rp.principal_id = a.role_principal_id
+INNER JOIN sys.database_principals AS mp ON mp.principal_id = a.member_principal_id
+'
+
+-- CREATE GRANT Object PERMISSIONS SCRIPT
+Declare @sqlstm nvarchar(max)
+Declare @dbname sysname
+Declare rolldbname cursor for
+
+Select name from master.dbo.sysdatabases where dbid>=5
+open rolldbname
+fetch next from rolldbname into @dbname
+While @@fetch_status=0
+????BEGIN
+????PRINT '-- Permissions for ' + @dbname
+???? SET @sqlstm=
+???? 'Print''-- Role Members for [?]''
+Print''Use ['+@DBName+ '];''
+Use ['+@DBName+ '] SELECT 
+StateDesc + '' '' + PermissionName + '' ON SCHEMA::['' + s.name + ''] TO ['' + p.name + ''];'' AS [--RemoveSQL]
+FROM sys.database_permissions d
+INNER JOIN sys.database_principals p ON d.grantee_principal_id = p.principal_id
+INNER JOIN sys.schemas AS s ON s.schema_id = d.major_id
+CROSS APPLY (SELECT state_desc COLLATE SQL_Latin1_General_CP1_CI_AS AS StateDesc,
+permission_name COLLATE SQL_Latin1_General_CP1_CI_AS AS PermissionName) ca
+WHERE d.class = 3 /*''SCHEMA''*/
+UNION ALL
+SELECT 
+StateDesc + '' '' + PermissionName + '' TO ['' + p.name + ''];'' AS RemoveSQL
+FROM sys.database_permissions d
+INNER JOIN sys.database_principals p ON d.grantee_principal_id = p.principal_id
+CROSS APPLY (SELECT state_desc COLLATE SQL_Latin1_General_CP1_CI_AS AS StateDesc,
+permission_name COLLATE SQL_Latin1_General_CP1_CI_AS AS PermissionName) ca
+WHERE d.class = 0 /*DATABASE*/
+UNION ALL
+SELECT 
+StateDesc + '' '' + PermissionName + '' ON ['' + s.name + ''].['' + o.name + ''] '' + ISNULL(''(['' + co.NAME + '']) '', '' '') + ''TO ['' + p.name + ''];'' AS RemoveSQL
+FROM sys.database_permissions d
+INNER JOIN sys.database_principals p ON d.grantee_principal_id = p.principal_id
+INNER JOIN sys.objects AS o ON o.object_id = d.major_id
+INNER JOIN sys.schemas AS s ON s.schema_id = o.schema_id
+LEFT OUTER JOIN sys.columns co ON co.object_id = o.object_id
+AND co.column_id = d.minor_id
+CROSS APPLY (SELECT state_desc COLLATE SQL_Latin1_General_CP1_CI_AS AS StateDesc,
+permission_name COLLATE SQL_Latin1_General_CP1_CI_AS AS PermissionName) ca
+WHERE d.class = 1 /*OBJECT OR COLUMN*/'
+EXEC (@sqlstm)
+????fetch next from rolldbname into @dbname
+????END
+close rolldbname
+deallocate rolldbname
+go
+-- CREATE REMOVE Object PERMISSIONS SCRIPT
+Declare @sqlstm nvarchar(max)
+Declare @dbname sysname
+Declare rolldbname cursor for
+
+Select name from master.dbo.sysdatabases where dbid>=5
+open rolldbname
+fetch next from rolldbname into @dbname
+While @@fetch_status=0
+????BEGIN
+????PRINT '-- Permissions for ' + @dbname
+???? SET @sqlstm=
+???? 'Print''-- Role Members for [?]''
+Print''Use ['+@DBName+ '];''
+Use ['+@DBName+ '] SELECT 
+''REVOKE '' ++ '' '' + PermissionName + '' ON SCHEMA::['' + s.name + ''] TO ['' + p.name + ''];'' AS [--RemoveSQL]
+FROM sys.database_permissions d
+INNER JOIN sys.database_principals p ON d.grantee_principal_id = p.principal_id
+INNER JOIN sys.schemas AS s ON s.schema_id = d.major_id
+CROSS APPLY (SELECT state_desc COLLATE SQL_Latin1_General_CP1_CI_AS AS StateDesc,
+permission_name COLLATE SQL_Latin1_General_CP1_CI_AS AS PermissionName) ca
+WHERE d.class = 3 /*''SCHEMA''*/
+UNION ALL
+SELECT 
+''REVOKE '' ++ '' '' + PermissionName + '' TO ['' + p.name + ''];'' AS RemoveSQL
+FROM sys.database_permissions d
+INNER JOIN sys.database_principals p ON d.grantee_principal_id = p.principal_id
+CROSS APPLY (SELECT state_desc COLLATE SQL_Latin1_General_CP1_CI_AS AS StateDesc,
+permission_name COLLATE SQL_Latin1_General_CP1_CI_AS AS PermissionName) ca
+WHERE d.class = 0 /*DATABASE*/
+UNION ALL
+SELECT 
+''REVOKE '' ++ '' '' + PermissionName + '' ON ['' + s.name + ''].['' + o.name + ''] '' + ISNULL(''(['' + co.NAME + '']) '', '' '') + ''TO ['' + p.name + ''];'' AS RemoveSQL
+FROM sys.database_permissions d
+INNER JOIN sys.database_principals p ON d.grantee_principal_id = p.principal_id
+INNER JOIN sys.objects AS o ON o.object_id = d.major_id
+INNER JOIN sys.schemas AS s ON s.schema_id = o.schema_id
+LEFT OUTER JOIN sys.columns co ON co.object_id = o.object_id
+AND co.column_id = d.minor_id
+CROSS APPLY (SELECT state_desc COLLATE SQL_Latin1_General_CP1_CI_AS AS StateDesc,
+permission_name COLLATE SQL_Latin1_General_CP1_CI_AS AS PermissionName) ca
+WHERE d.class = 1 /*OBJECT OR COLUMN*/'
+EXEC (@sqlstm)
+????fetch next from rolldbname into @dbname
+????END
+close rolldbname
+deallocate rolldbname
+go
+
+
+
+
+
+

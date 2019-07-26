@@ -1,0 +1,58 @@
+Synchronize several stored procedure between two servers
+
+http://www.sqlservercentral.com/scripts/T-SQL/68906/
+
+This stored procedures uses the procedure [spSynchStoredProcedure] I had sent before.
+
+For example, your development server is called DEV and your production server is called PROD, and you create two linked servers in local SQL Server with the same name. Assumed that your database between DEV and PROD have the same name: TestDB.
+
+If you want to synchronize 3 stored procedures called TestProc1, TestProc2, TestProc3 between TestDB of DEV and PROD, you can excute this procedure like that:
+
+EXEC spSynchMultiProcedures @ProcedureNames = 'TestProc1, TestProc2, TestProc3', @SourceServer = 'DEV', @SourceDatabase = 'TestDB', @TargetServer = 'PROD', @TargetDatabase = 'TestDB'
+
+
+
+
+
+CREATE PROCEDURE dbo.spSynchMultiProcedures
+	@ProcedureNames NVARCHAR(MAX) = NULL --Separate each procedures by comma
+	, @SourceServer VARCHAR(50) = NULL
+	, @SourceDatabase VARCHAR(50) = NULL
+	, @TargetServer VARCHAR(50) = NULL
+	, @TargetDatabase VARCHAR(50) = NULL
+AS
+BEGIN
+	SET NOCOUNT ON;
+	DECLARE @POS BIGINT;
+	DECLARE @POS1 BIGINT;
+	DECLARE @ProcedureName VARCHAR(50);	
+	SET @POS = 0;
+	SET @POS1 = CHARINDEX(',', @ProcedureNames, @POS);
+	WHILE (@POS1 > 0)
+	BEGIN		
+		SET @ProcedureName = SUBSTRING(@ProcedureNames, @POS, @POS1 - @POS);
+		PRINT @ProcedureName;
+		EXEC dbo.spSynchStoredProcedure @ProcedureName 
+									, @SourceServer
+									, @SourceDatabase
+									, @TargetServer
+									, @TargetDatabase
+
+		SET @POS = @POS1;
+		SET @POS1 = CHARINDEX(',', @ProcedureNames, @POS + 1);
+	END
+	IF @POS < LEN(@ProcedureNames)
+	BEGIN
+		SET @ProcedureName = SUBSTRING(@ProcedureNames, @POS + 1, LEN(@ProcedureNames) - @POS);
+		PRINT @ProcedureName;
+		EXEC dbo.spSynchStoredProcedure @ProcedureName
+									, @SourceServer
+									, @SourceDatabase
+									, @TargetServer
+									, @TargetDatabase
+	END
+END;
+
+
+
+
